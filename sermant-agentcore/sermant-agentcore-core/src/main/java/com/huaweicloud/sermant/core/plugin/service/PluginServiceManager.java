@@ -17,8 +17,11 @@
 package com.huaweicloud.sermant.core.plugin.service;
 
 import com.huaweicloud.sermant.core.common.LoggerFactory;
+import com.huaweicloud.sermant.core.plugin.config.PluginMeta;
 import com.huaweicloud.sermant.core.service.ServiceManager;
 
+
+import java.lang.instrument.Instrumentation;
 import java.util.Locale;
 import java.util.ServiceLoader;
 import java.util.logging.Level;
@@ -53,6 +56,16 @@ public class PluginServiceManager extends ServiceManager {
                             service.getClass()), ex);
                 }
             }
+        }
+    }
+
+    public static void initTraditionalService(PluginMeta pluginMeta,ClassLoader classLoader, String pluginPath, Instrumentation instrumentation){
+        TraditionalServiceImpl traditionalService=new TraditionalServiceImpl(pluginPath,classLoader,instrumentation,pluginMeta);
+        try {
+            traditionalService.start();
+        } catch (Throwable ex) {
+            LOGGER.log(Level.SEVERE, String.format(Locale.ENGLISH, "Error occurs while starting plugin service: %s",
+                    traditionalService.getClass()), ex);
         }
     }
 

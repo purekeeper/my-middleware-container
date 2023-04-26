@@ -18,27 +18,26 @@ package com.huaweicloud.sermant.core.plugin;
 
 import com.huaweicloud.sermant.core.classloader.ClassLoaderManager;
 import com.huaweicloud.sermant.core.common.BootArgsIndexer;
+import com.huaweicloud.sermant.core.common.CommonConstant;
 import com.huaweicloud.sermant.core.common.LoggerFactory;
 import com.huaweicloud.sermant.core.event.collector.FrameworkEventCollector;
 import com.huaweicloud.sermant.core.exception.SchemaException;
+import com.huaweicloud.sermant.core.operation.OperationManager;
+import com.huaweicloud.sermant.core.operation.converter.api.YamlConverter;
 import com.huaweicloud.sermant.core.plugin.classloader.PluginClassLoader;
 import com.huaweicloud.sermant.core.plugin.common.PluginConstant;
 import com.huaweicloud.sermant.core.plugin.common.PluginSchemaValidator;
 import com.huaweicloud.sermant.core.plugin.config.PluginConfigManager;
+import com.huaweicloud.sermant.core.plugin.config.PluginMeta;
+import com.huaweicloud.sermant.core.plugin.config.PluginSetting;
 import com.huaweicloud.sermant.core.plugin.service.PluginServiceManager;
+import sun.tools.jar.resources.jar;
 
-import java.io.File;
-import java.io.FileFilter;
-import java.io.IOException;
+import java.io.*;
 import java.lang.instrument.Instrumentation;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
+import java.util.*;
 import java.util.jar.JarFile;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -55,6 +54,7 @@ public class PluginManager {
      * 日志
      */
     private static final Logger LOGGER = LoggerFactory.getLogger();
+    private static final YamlConverter YAML_CONVERTER = OperationManager.getOperation(YamlConverter.class);
 
     private PluginManager() {
     }
@@ -62,7 +62,7 @@ public class PluginManager {
     /**
      * 初始化插件包、配置、插件服务包等插件相关的内容
      *
-     * @param pluginNames 插件名称集
+     * @param pluginNames     插件名称集
      * @param instrumentation Instrumentation对象
      * @return 是否有加载任何插件
      */
@@ -104,15 +104,19 @@ public class PluginManager {
      * @param pluginPath 插件根目录
      * @return 插件服务包目录
      */
-    private static File getServiceDir(String pluginPath) {
+    public static File getServiceDir(String pluginPath) {
         return new File(pluginPath + File.separatorChar + PluginConstant.SERVICE_DIR_NAME);
+    }
+
+    private static File getConfigDir(String pluginPath) {
+        return new File(pluginPath + File.separatorChar + PluginConstant.CONFIG_DIR_NAME);
     }
 
     /**
      * 初始化一个插件，检查必要参数，并调用{@link #doInitPlugin}
      *
-     * @param pluginName 插件名称
-     * @param pluginPackage 插件包路径
+     * @param pluginName      插件名称
+     * @param pluginPackage   插件包路径
      * @param instrumentation Instrumentation对象
      */
     private static void initPlugin(String pluginName, String pluginPackage, Instrumentation instrumentation) {
@@ -122,7 +126,7 @@ public class PluginManager {
                     "Plugin directory %s does not exist, so skip initializing %s. ", pluginPath, pluginName));
             return;
         }
-        doInitPlugin(pluginName, pluginPath, instrumentation);
+        doInitPluginWithTraditional(pluginName, pluginPath, instrumentation);
     }
 
     /**
@@ -135,8 +139,8 @@ public class PluginManager {
      *     5.设置默认插件版本
      * </pre>
      *
-     * @param pluginName 插件名称
-     * @param pluginPath 插件路径
+     * @param pluginName      插件名称
+     * @param pluginPath      插件路径
      * @param instrumentation Instrumentation对象
      */
     private static void doInitPlugin(String pluginName, String pluginPath, Instrumentation instrumentation) {
@@ -147,6 +151,47 @@ public class PluginManager {
         setDefaultVersion(pluginName);
         LOGGER.info(String.format(Locale.ROOT, "Load plugin: [%s] successful.", pluginName));
         FrameworkEventCollector.getInstance().collectPluginsLoadEvent(pluginName);
+    }
+
+    private static void doInitPluginWithTraditional(String pluginName, String pluginPath, Instrumentation instrumentation) {
+        loadPlugins(pluginName, getPluginDir(pluginPath), instrumentation);
+        PluginMeta pluginMeta = loadPluginMeta(pluginPath);
+        final ClassLoader classLoader = loadServices(pluginName, getServiceDir(pluginPath));
+        if (PluginConstant.TRADITIONAL_PLUGIN_TYPE.equalsIgnoreCase(pluginMeta.getType())) {
+            PluginServiceManager.initTraditionalService(pluginMeta,classLoader, pluginPath, instrumentation);
+        } else {
+            loadConfig(PluginConstant.getPluginConfigFile(pluginPath), classLoader);
+            initService(classLoader);
+        }
+        setDefaultVersion(pluginName);
+        LOGGER.info(String.format(Locale.ROOT, "Load plugin: [%s] successful.", pluginName));
+        FrameworkEventCollector.getInstance().collectPluginsLoadEvent(pluginName);
+    }
+
+    /**
+     * 加载插件设定配置，获取所有需要加载的插件文件夹
+     *
+     * @return 插件设定配置
+     */
+    private static PluginMeta loadPluginMeta(String pluginPath) {
+        Reader reader = null;
+        try {
+            reader = new InputStreamReader(new FileInputStream(PluginConstant.getPluginMetaFile(pluginPath)),
+                    CommonConstant.DEFAULT_CHARSET);
+            Optional<PluginMeta> pluginMetaOptional = YAML_CONVERTER.convert(reader, PluginMeta.class);
+            return pluginMetaOptional.orElse(null);
+        } catch (IOException ignored) {
+            LOGGER.warning("Plugin setting file is not found. ");
+            return new PluginMeta();
+        } finally {
+            if (reader != null) {
+                try {
+                    reader.close();
+                } catch (IOException ignored) {
+                    LOGGER.warning("Unexpected exception occurs. ");
+                }
+            }
+        }
     }
 
     /**
@@ -170,7 +215,7 @@ public class PluginManager {
     /**
      * 由{@link PluginConfigManager#loadServiceConfig(java.io.File, java.lang.ClassLoader)}方法加载插件配置信息
      *
-     * @param configFile 配置文件
+     * @param configFile  配置文件
      * @param classLoader 加载插件服务包的自定义类加载器
      */
     private static void loadConfig(File configFile, ClassLoader classLoader) {
@@ -183,7 +228,7 @@ public class PluginManager {
      * @param dir 目标文件夹
      * @return 所有jar包
      */
-    private static File[] listJars(File dir) {
+    public static File[] listJars(File dir) {
         if (!dir.exists() || !dir.isDirectory()) {
             return new File[0];
         }
@@ -224,7 +269,7 @@ public class PluginManager {
      * 获取插件所有jar包的URL，将进行jar包的校验和版本的校验
      *
      * @param pluginName 插件名称
-     * @param jars jar包集
+     * @param jars       jar包集
      * @return jar包的URL集
      */
     private static URL[] toUrls(String pluginName, File[] jars) {
@@ -258,14 +303,14 @@ public class PluginManager {
     /**
      * 将插件包文件转换为jar包，再做处理
      *
-     * @param pluginName 插件名称
-     * @param jar 插件包文件
+     * @param pluginName    插件名称
+     * @param jar           插件包文件
      * @param ifCheckSchema 是否做jar包元数据检查
-     * @param consumer jar包消费者
+     * @param consumer      jar包消费者
      * @return 是否无异常处理完毕
      */
     private static boolean processByJarFile(String pluginName, File jar, boolean ifCheckSchema,
-            JarFileConsumer consumer) {
+                                            JarFileConsumer consumer) {
         JarFile jarFile = null;
         try {
             jarFile = new JarFile(jar);
@@ -293,8 +338,8 @@ public class PluginManager {
     /**
      * 加载所有插件包
      *
-     * @param pluginName 插件名称
-     * @param pluginDir 插件包目录
+     * @param pluginName      插件名称
+     * @param pluginDir       插件包目录
      * @param instrumentation Instrumentation对象
      */
     private static void loadPlugins(String pluginName, File pluginDir, Instrumentation instrumentation) {
@@ -305,6 +350,16 @@ public class PluginManager {
                     instrumentation.appendToSystemClassLoaderSearch(jarFile);
                 }
             });
+        }
+    }
+
+    public static JarFile getAgentJarFile(String pluginPath) {
+        File agentFile = listJars(getServiceDir(pluginPath))[0];
+        try {
+            return new JarFile(agentFile);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return null;
         }
     }
 

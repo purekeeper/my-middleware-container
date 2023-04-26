@@ -46,6 +46,9 @@ public class PluginConstant {
      */
     public static final String CONFIG_FILE_NAME = "config.yaml";
 
+
+    public static final String META_FILE_NAME = "meta.yaml";
+
     /**
      * sermant插件名称配置键，于manifest中获取
      */
@@ -62,6 +65,12 @@ public class PluginConstant {
     public static final String PLUGIN_DEFAULT_VERSION = "unknown";
 
     /**
+     * plugin type
+     */
+
+    public static final String TRADITIONAL_PLUGIN_TYPE = "traditional";
+
+    /**
      * 获取插件配置文件
      *
      * @param pluginPath 插件根目录
@@ -70,4 +79,9 @@ public class PluginConstant {
     public static File getPluginConfigFile(String pluginPath) {
         return new File(pluginPath + File.separatorChar + CONFIG_DIR_NAME + File.separatorChar + CONFIG_FILE_NAME);
     }
+
+    public static File getPluginMetaFile(String pluginPath){
+        return new File(pluginPath + File.separatorChar + CONFIG_DIR_NAME + File.separatorChar + META_FILE_NAME);
+    }
 }
+
